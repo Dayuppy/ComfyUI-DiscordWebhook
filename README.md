@@ -15,9 +15,12 @@ Clone or download this repo into your ComfyUI/custom_nodes folder.
 ![image](https://github.com/user-attachments/assets/71450181-a788-4fc7-ad5f-236c994100c1)
 ![image](https://github.com/user-attachments/assets/eb5a0bc5-1c7f-4aec-9bb6-e7a11de946b8)
 
-Modify your .bat or .sh to include an environment variable containing your your Discord Webhook: https://support.discord.com/hc/en-us/articles/228383668-Intro-to-Webhooks
-
-Install discord_webhook module with pip.
+# Installation: 
+> [!IMPORTANT]  
+> Modify your .bat or .sh to include an environment variable containing your your Discord Webhook: https://support.discord.com/hc/en-us/articles/228383668-Intro-to-Webhooks
+>
+> Install discord_webhook module with pip.
+#
 
 # For Windows:
 
