@@ -1,3 +1,10 @@
+"""
+@author: Dayuppy
+@title: Discord Webhook
+@nickname: DiscordWebhook
+@description: A very simple Discord webhook integration node for ComfyUI that lets you post images and text with optional metadata.
+"""
+
 import os
 import json
 import tempfile
@@ -13,10 +20,9 @@ class DiscordPostViaWebhook:
     OUTPUT_TOOLTIPS = ("Image Output Pass-through",)
     OUTPUT_NODE = True
     FUNCTION = "execute"
-    CATEGORY = "Dayuppy Test Nodes"
+    CATEGORY = "Discord"
     DESCRIPTION = "Post image and message to Discord using webhook"
-    DEPRECATED = False
-    EXPERIMENTAL = True
+    EXPERIMENTAL = False
 
     @classmethod
     def INPUT_TYPES(cls):
