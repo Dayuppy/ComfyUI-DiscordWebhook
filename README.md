@@ -1,5 +1,6 @@
 # ComfyUI-DiscordWebhook
 A very simple Discord webhook integration node for ComfyUI that lets you post images and text with optional metadata.
+
 ![image](https://github.com/user-attachments/assets/c2459fc5-ff7e-454a-b691-4baf7999d1ea)
 ![image](https://github.com/user-attachments/assets/29b24147-4f42-486e-a052-ee022f6b13d2)
 
