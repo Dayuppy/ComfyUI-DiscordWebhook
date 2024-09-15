@@ -27,6 +27,13 @@ import tempfile
 import shutil
 import numpy as np
 import asyncio
+import soundfile as sf
+import ffmpeg
+import torchaudio
+import torch
+import torchvision.io as tvio
+import hashlib
+import folder_paths # type: ignore
 from PIL import Image, ImageDraw
 from discord_webhook import AsyncDiscordWebhook
 
@@ -42,9 +49,112 @@ def create_default_image():
 
     return image
 
+def process_audio(audio):
+    """Process audio input (dict with waveform and sample_rate) and convert it to FLAC format."""
+
+    # Debugging: Print the entire input to see what we are dealing with
+    print("DEBUG: Received audio input:", audio)
+
+    # Extract waveform and sample rate from the dictionary
+    if isinstance(audio, dict):
+        if 'waveform' in audio and 'sample_rate' in audio:
+            audio_array = audio['waveform']
+            sample_rate = audio['sample_rate']
+        else:
+            raise ValueError(f"Audio input is missing 'waveform' or 'sample_rate'. Available keys: {audio.keys()}")
+    else:
+        raise ValueError("Expected audio input to be a dictionary.")
+
+    # Convert to NumPy array if it's a PyTorch tensor
+    if hasattr(audio_array, "numpy"):
+        audio_array = audio_array.numpy()
+
+    # Ensure the array is 2D: (samples, channels)
+    audio_array = np.squeeze(audio_array)  # Remove dimensions of size 1
+
+    if audio_array.ndim == 1:
+        # If mono (1D), reshape to (samples, 1)
+        audio_array = audio_array[:, np.newaxis]
+
+    # Debugging: Print the shape of the audio array
+    print(f"DEBUG: Processed audio shape: {audio_array.shape}")
+
+    # Save the audio input in FLAC format using soundfile
+    temp_dir = tempfile.mkdtemp()
+    
+    # Preserve the original filename and change the extension to .flac
+    file_path = os.path.join(temp_dir, "audio.flac")
+    
+    sf.write(file_path, audio_array, sample_rate, format='FLAC')
+
+    with open(file_path, 'rb') as f:
+        data = f.read()
+
+    shutil.rmtree(temp_dir)  # Clean up temporary directory
+    return {"data": data, "name": "audio.flac"}
+
+
+def process_video(video_path):
+    """Process video input (assuming it's a file path) and convert it to FLV format."""
+    temp_dir = tempfile.mkdtemp()
+    output_file = os.path.join(temp_dir, "video.flv")
+
+    # Use ffmpeg-python to convert to FLV format
+    ffmpeg.input(video_path).output(output_file, format='flv').run(overwrite_output=True)
+
+    with open(output_file, 'rb') as f:
+        data = f.read()
+
+    shutil.rmtree(temp_dir)
+    return {"data": data, "name": "video.flv"}
+
+class DiscordLoadVideo:
+    @classmethod
+    def INPUT_TYPES(cls):
+        input_dir = folder_paths.get_input_directory()
+        files = [f for f in os.listdir(input_dir) if os.path.isfile(os.path.join(input_dir, f)) and f.endswith(('.mp4', '.avi', '.mov', '.mkv'))]
+        return {"required": {"video": (sorted(files), {"video_upload": True})}}
+
+    CATEGORY = "Discord\Video"
+    
+    RETURN_TYPES = ("VIDEO", "AUDIO")
+    FUNCTION = "load_video"
+
+    def load_video(self, video):
+        video_path = folder_paths.get_annotated_filepath(video)
+
+        # Load video frames and audio using torchvision's read_video
+        video_frames, audio_frames, info = tvio.read_video(video_path, pts_unit="sec")
+
+        # Normalize video frames (assumes RGB)
+        video_frames = video_frames.float() / 255.0
+
+        # Transpose to match the typical format (batch_size, channels, height, width, num_frames)
+        video_frames = video_frames.permute(0, 3, 1, 2)
+
+        # Normalize audio frames (if audio is present)
+        if audio_frames is not None and len(audio_frames) > 0:
+            audio_frames = audio_frames.float() / torch.abs(audio_frames).max()  # Normalize audio
+
+        return (video_frames, audio_frames)
+
+    @classmethod
+    def IS_CHANGED(cls, video):
+        video_path = folder_paths.get_annotated_filepath(video)
+        m = hashlib.sha256()
+        with open(video_path, 'rb') as f:
+            m.update(f.read())
+        return m.digest().hex()
+
+    @classmethod
+    def VALIDATE_INPUTS(cls, video):
+        if not folder_paths.exists_annotated_filepath(video):
+            return "Invalid video file: {}".format(video)
+        return True
+
 class DiscordSetWebhook:
-    RETURN_TYPES = ("IMAGE",)
-    RETURN_NAMES = ("DUMMY IMAGE",)
+    RETURN_TYPES = ("IMAGE", "*")
+    RETURN_NAMES = ("DUMMY IMAGE", "DUMMY OUTPUT")
     OUTPUT_NODE = True
     FUNCTION = "execute"
     CATEGORY = "Discord"
@@ -60,7 +170,7 @@ class DiscordSetWebhook:
         with open("discord_webhook_url.txt", "w") as f:
             f.write(URL)
 
-        return (create_default_image(),)
+        return (create_default_image(), None)
 
 class DiscordPostViaWebhook:
     RETURN_TYPES = ("IMAGE",)
@@ -72,12 +182,12 @@ class DiscordPostViaWebhook:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "image": ("IMAGE",)
-                },
-            "optional": {
-                "send_Message": ("BOOLEAN", {"default": True}),
-                "send_Image": ("BOOLEAN", {"default": True}),
                 "message": ("STRING", {"default": "", "multiline": True}),
+            },
+            "optional": {
+                "image": ("IMAGE",),
+                "audio": ("AUDIO",),
+                "video": ("VIDEO",),
                 "prepend_message": ("STRING", {"default": "", "multiline": True}),
             },
         }
@@ -96,7 +206,6 @@ class DiscordPostViaWebhook:
         if image is None:
             images_to_send.append(create_default_image())
         else:
-            # Handle both single and batched images
             image_array = image.cpu().numpy() if hasattr(image, "cpu") else image
             image_array = np.clip(image_array * 255, 0, 255).astype(np.uint8)
 
@@ -107,7 +216,6 @@ class DiscordPostViaWebhook:
             else:
                 raise ValueError("Input must be a 3D (single image) or 4D (batch) array.")
 
-        # Save images and return the file data
         temp_dir = tempfile.mkdtemp()
         files = []
 
@@ -115,7 +223,6 @@ class DiscordPostViaWebhook:
             file_path = os.path.join(temp_dir, f"image_{idx}.png")
             img.save(file_path, format="PNG", compress_level=1)
 
-            # If the file size exceeds 20MB, resize and save again
             if os.path.getsize(file_path) > 20 * 1024 * 1024:
                 img = img.resize((img.width // 2, img.height // 2))
                 img.save(file_path, format="PNG", compress_level=9)
@@ -126,34 +233,42 @@ class DiscordPostViaWebhook:
         shutil.rmtree(temp_dir)
         return files
 
-    def execute(self, image, send_Message=True, send_Image=True, message="", prepend_message=""):
+    def execute(self, image=None, audio=None, video=None, message="", prepend_message=""):
         with open("discord_webhook_url.txt", "r") as f:
             webhook_url = f.read().strip()
 
         if not webhook_url:
             raise ValueError("Webhook URL is empty.")
 
-        full_message = f"{prepend_message}\n{message}" if send_Message else ""
-        files = self.process_image(image) if send_Image else None
+        full_message = f"{prepend_message}\n{message}"
 
-        if files:
-            # Split files into batches of 4 (Discord limit)
-            batches = [files[i:i + 4] for i in range(0, len(files), 4)]
+        files = []
+        if image is not None:
+            files.extend(self.process_image(image))
+        if audio is not None:
+            files.append(process_audio(audio))  # Handle audio as an array/tensor
+        if video is not None:
+            files.append(process_video(video))  # Handle video as a file path or array
 
-            # Send multiple webhooks if necessary
-            for batch in batches:
-                asyncio.run(self.send_webhook(webhook_url, full_message, batch))
-        else:
-            asyncio.run(self.send_webhook(webhook_url, full_message))
+        # Ensure files are within size limit
+        valid_files = [f for f in files if len(f["data"]) <= 25 * 1024 * 1024]
 
-        return (image,)
+        # Split files into batches of 4 (Discord limit)
+        batches = [valid_files[i:i + 4] for i in range(0, len(valid_files), 4)]
+
+        for batch in batches:
+            asyncio.run(self.send_webhook(webhook_url, full_message, batch))
+
+        return (image, None)
 
 NODE_CLASS_MAPPINGS = {
     "DiscordSetWebhook": DiscordSetWebhook,
-    "DiscordPostViaWebhook": DiscordPostViaWebhook
+    "DiscordPostViaWebhook": DiscordPostViaWebhook,
+    "DiscordLoadVideo": DiscordLoadVideo,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "DiscordSetWebhook": "Set Discord Webhook",
-    "DiscordPostViaWebhook": "Use Discord Webhook"
+    "DiscordPostViaWebhook": "Use Discord Webhook",
+    "DiscordLoadVideo": "Load Video for Discord",
 }
