@@ -1,3 +1,4 @@
 NODE_CLASS_MAPPINGS = {
+    "DiscordSetWebhook": DiscordSetWebhook,
     "DiscordPostViaWebhook": DiscordPostViaWebhook
 }

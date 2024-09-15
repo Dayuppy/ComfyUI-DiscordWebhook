@@ -2,153 +2,133 @@
 @author: Dayuppy
 @title: Discord Webhook
 @nickname: DiscordWebhook
-@description: A very simple Discord webhook integration node for ComfyUI that lets you post images and text with optional metadata. IMPORTANT!: You must set a DISCORD_HOOK=your_webhook_here environment variable depending on your OS!
+@description: A very simple Discord webhook integration node for ComfyUI that lets you post images and text with optional metadata.
 """
 
 import os
-import json
 import tempfile
-import platform
 import shutil
 import numpy as np
-from discord_webhook import DiscordWebhook
-from PIL import Image
+import asyncio
+from PIL import Image, ImageDraw
+from discord_webhook import AsyncDiscordWebhook
 
-class DiscordPostViaWebhook:
-    RETURN_TYPES = ("IMAGE",)  # Return the image as pass-through
-    RETURN_NAMES = ("IMAGE_PASSTHROUGH",)  # Output name
-    OUTPUT_TOOLTIPS = ("Image Output Pass-through",)
+def create_default_image():
+    """Create a simple TV test pattern image."""
+    image = Image.new("RGB", (128, 128), "black")
+    colors = ["white", "yellow", "cyan", "green", "magenta", "red", "blue", "black"]
+    bar_width = 128 // len(colors)
+    draw = ImageDraw.Draw(image)
+    
+    for i, color in enumerate(colors):
+        draw.rectangle([i * bar_width, 0, (i + 1) * bar_width, 128], fill=color)
+    
+    return image
+
+class DiscordSetWebhook:
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("DUMMY IMAGE",)
     OUTPUT_NODE = True
     FUNCTION = "execute"
     CATEGORY = "Discord"
-    DESCRIPTION = "Post image and message to Discord using webhook"
-    EXPERIMENTAL = False
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"URL": ("STRING",)}}
+    
+    def execute(self, URL):
+        if not URL.startswith("https://discord.com/api/webhooks/"):
+            raise ValueError("Invalid URL format. URL should start with 'https://discord.com/api/webhooks/' Please reference https://support.discord.com/hc/en-us/articles/228383668-Intro-to-Webhooks")
+        
+        with open("discord_webhook_url.txt", "w") as f:
+            f.write(URL)
+            
+        return (create_default_image(),)
+        
+class DiscordPostViaWebhook:
+    RETURN_TYPES = ("IMAGE",)
+    OUTPUT_NODE = True
+    FUNCTION = "execute"
+    CATEGORY = "Discord"
 
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "image": ("IMAGE",),
-            },
+                "image": ("IMAGE",)
+                },
             "optional": {
-                "send_metadata": ("BOOLEAN", {"default": True, "tooltip": "Toggle to include metadata/additional info in the message."}),
-                "send_message": ("BOOLEAN", {"default": True, "tooltip": "Toggle to include user message in the post."}),
-                "send_image": ("BOOLEAN", {"default": True, "tooltip": "Toggle to include image in the post."}),
-                "message": ("STRING", {"default": "", "multiline": True, "tooltip": "Message to accompany the image."}),
-                "prepend_message": ("STRING", {"default": "", "multiline": True, "tooltip": "Optional string to prepend to the message."}),
+                "send_Message": ("BOOLEAN", {"default": True}),
+                "send_Image": ("BOOLEAN", {"default": True}),
+                "message": ("STRING", {"default": "", "multiline": True}),
+                "prepend_message": ("STRING", {"default": "", "multiline": True}),
             },
-            "hidden": {
-                "prompt": "PROMPT",
-                "extra_pnginfo": "EXTRA_PNGINFO",
-            }
         }
 
-    def execute(self, image, send_metadata=True, send_message=True, send_image=True, message="", prepend_message="", prompt=None, extra_pnginfo=None):
-        # Retrieve the Discord webhook URL from the environment variable
-        webhook_url = os.getenv("DISCORD_HOOK")
-        if not webhook_url:
-            # Determine the OS and provide specific instructions
-            os_type = platform.system()
-            instructions = "Please set the 'DISCORD_HOOK' environment variable."
+    async def send_webhook(self, url, message, files=None):
+        webhook = AsyncDiscordWebhook(url=url, content=message[:2000], timeout=30.0)
+        if files:
+            for file in files:
+                webhook.add_file(file=file["data"], filename=file["name"])
+        await webhook.execute()
 
-            if os_type == "Linux":
-                instructions += " On Linux, you can set it by adding the following line to your terminal or shell startup file (e.g., .bashrc or .zshrc):\n"
-                instructions += 'export DISCORD_HOOK="your_webhook_url"'
-            elif os_type == "Windows":
-                instructions += " On Windows, you can set it by running the following in Command Prompt or PowerShell:\n"
-                instructions += '$env:DISCORD_HOOK="your_webhook_url"'
-            elif os_type == "Darwin":  # MacOS
-                instructions += " On Mac, you can set it by adding the following line to your terminal or shell startup file (e.g., .bash_profile or .zshrc):\n"
-                instructions += 'export DISCORD_HOOK="your_webhook_url"'
-            else:
-                instructions += " For other systems, please consult your operating system's documentation on how to set environment variables."
-
-            raise AssertionError(f"Environment variable 'DISCORD_HOOK' is not set. {instructions}")
-
-        temp_dir = tempfile.mkdtemp()
-        full_message = ""
-
-        if send_metadata:
-            # Check for metadata in the image and append to the message if found
-            metadata = {}
-            if prompt is not None:
-                metadata["prompt"] = json.dumps(prompt)
+    def process_image(self, image):
+        """Process the image and return it in a format suitable for Discord."""       
+        if image is None:
+            image = create_default_image()
             
-            if extra_pnginfo is not None:
-                for key, value in extra_pnginfo.items():
-                    metadata[key] = json.dumps(value)
+        if isinstance(image, np.ndarray):
+            image = Image.fromarray(np.clip(image.squeeze() * 255, 0, 255).astype(np.uint8))
+        elif hasattr(image, "cpu"):
+            array = image.cpu().numpy()
 
-            # Extract and format the required metadata
-            metadata_message = ""
-            if metadata:
-                prompt_info = metadata.get("prompt", "{}")
-                try:
-                    prompt_data = json.loads(prompt_info)
-                    for key, value in prompt_data.items():
-                        if "inputs" in value:
-                            inputs = value["inputs"]
-                            if "seed" in inputs:
-                                metadata_message += f"Seed: {inputs['seed']}\n"
-                            if "steps" in inputs:
-                                metadata_message += f"Steps: {inputs['steps']}\n"
-                            if "cfg" in inputs:
-                                metadata_message += f"Config Scale: {inputs['cfg']}\n"
-                            if "sampler_name" in inputs:
-                                metadata_message += f"Sampler Name: {inputs['sampler_name']}\n"
-                            if "scheduler" in inputs:
-                                metadata_message += f"Scheduler: {inputs['scheduler']}\n"
-                            if "width" in inputs:
-                                metadata_message += f"Width: {inputs['width']}\n"
-                            if "height" in inputs:
-                                metadata_message += f"Height: {inputs['height']}\n"
-                except json.JSONDecodeError:
-                    metadata_message += "Error reading image metadata.\n"
-                full_message += metadata_message
+            # Convert array to PIL image
+            if 'array' in locals():
+                if len(array.shape) == 4 and array.shape[-1] == 3:
+                    array = np.squeeze(array, axis=0)
 
-        if send_message:
-            # Append the user message
-            full_message += f"{prepend_message}\nUser message: {message}"
+            array = np.clip(array * 255, 0, 255).astype(np.uint8)
+            image = Image.fromarray(array)
+    
+        # Save the image to a temporary file
+        temp_dir = tempfile.mkdtemp()
+        file_path = os.path.join(temp_dir, "image.png")
+        image.save(file_path, format="PNG", compress_level=1)
 
-        if send_image:
-            file_path = os.path.join(temp_dir, "image.png")
+         # If the file size exceeds 20MB, resize and save again
+        if os.path.getsize(file_path) > 20 * 1024 * 1024:
+            image = image.resize((image.width // 2, image.height // 2))
+            image.save(file_path, format="PNG", compress_level=9)
 
-            # Convert the image tensor to a numpy array and then to a PIL Image
-            array = 255.0 * image.cpu().numpy()
+        with open(file_path, "rb") as f:
+            files = [{"data": f.read(), "name": "image.png"}]
 
-            # Squeeze the unnecessary dimensions (batch and channel)
-            array = np.squeeze(array)
+        # Clean up the temporary directory
+        shutil.rmtree(temp_dir)
+        
+        return files
+    
+    def execute(self, image, send_Message=True, send_Image=True, message="", prepend_message=""):
+        with open("discord_webhook_url.txt", "r") as f:
+            webhook_url = f.read().strip()
+        
+        if not webhook_url:
+            raise ValueError("Webhook URL is empty.")
+        
+        if send_Message:
+            message = f"{prepend_message}\n{message}"
+        
+        files = self.process_image(image) if send_Image else None
+        asyncio.run(self.send_webhook(webhook_url, message, files))
 
-            # Ensure array has a proper shape for an image (e.g., (512, 512, 3) for RGB)
-            if len(array.shape) == 3 and array.shape[0] == 1:
-                array = np.squeeze(array, axis=0)
-
-            # Now convert to a PIL image
-            img = Image.fromarray(np.clip(array, 0, 255).astype(np.uint8))
-
-            # Resize or compress the image to ensure it's under 20MB
-            img.save(file_path, format="PNG", compress_level=9)
-            if os.path.getsize(file_path) > 20 * 1024 * 1024:
-                img = img.resize((img.width // 2, img.height // 2))
-                img.save(file_path, format="PNG", compress_level=9)
-
-            # Send the image and message to Discord
-            wh = DiscordWebhook(url=webhook_url, content=full_message[:2000])  # Truncate message to fit within Discord limits
-            with open(file_path, "rb") as f:
-                wh.add_file(file=f.read(), filename="image.png")
-            wh.execute()
-
-            shutil.rmtree(temp_dir)
-
-        # Return the image as a pass-through
         return (image,)
 
-
-# Map class to node
 NODE_CLASS_MAPPINGS = {
+    "DiscordSetWebhook": DiscordSetWebhook,
     "DiscordPostViaWebhook": DiscordPostViaWebhook
 }
 
-# Display name mapping for node
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "DiscordPostViaWebhook": "Discord Webhook",
+    "DiscordSetWebhook": "Set Discord Webhook",
+    "DiscordPostViaWebhook": "Use Discord Webhook"
 }
