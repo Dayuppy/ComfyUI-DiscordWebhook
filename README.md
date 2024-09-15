@@ -50,3 +50,21 @@ Ex. custom_launcher.sh
 ./bin/python -s ./main.py
 pause
 ```
+# License
+> [!IMPORTANT]
+> Most of my work is under the GNU LESSER GENERAL PUBLIC LICENSE Version 2.1 (See the included LICENSE or visit (https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html#SEC1)
+> <br></br>
+> In summary, you may make modifications and derivatives of this work as long as:
+>
+> + The work is licensed under LGPLv2.1
+> 
+> + The source is made freely available
+> 
+> + You link back to my original source
+> 
+> + My original copyright notices are preserved without modification
+> 
+> + Any files modified carry prominent notices stating that you changed the files and the date of any change.
+
+> [!NOTE]
+> ### Distributing this work in it's entirety and without modfication such as in a pack or content delivery system is perfectly fine and is not subject to the scope of this license.
