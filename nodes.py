@@ -32,14 +32,14 @@ from discord_webhook import AsyncDiscordWebhook
 
 def create_default_image():
     """Create a simple TV test pattern image."""
-    image = Image.new("RGB", (128, 128), "black")
     colors = ["white", "yellow", "cyan", "green", "magenta", "red", "blue", "black"]
     bar_width = 128 // len(colors)
+    image = Image.new("RGB", (128, 128), "black")
     draw = ImageDraw.Draw(image)
-    
+
     for i, color in enumerate(colors):
         draw.rectangle([i * bar_width, 0, (i + 1) * bar_width, 128], fill=color)
-    
+
     return image
 
 class DiscordSetWebhook:
@@ -55,13 +55,13 @@ class DiscordSetWebhook:
     
     def execute(self, URL):
         if not URL.startswith("https://discord.com/api/webhooks/"):
-            raise ValueError("Invalid URL format. URL should start with 'https://discord.com/api/webhooks/' Please reference https://support.discord.com/hc/en-us/articles/228383668-Intro-to-Webhooks")
-        
+            raise ValueError("Invalid URL format. URL should start with 'https://discord.com/api/webhooks/'. Please reference https://support.discord.com/hc/en-us/articles/228383668-Intro-to-Webhooks")
+
         with open("discord_webhook_url.txt", "w") as f:
             f.write(URL)
-            
+
         return (create_default_image(),)
-        
+
 class DiscordPostViaWebhook:
     RETURN_TYPES = ("IMAGE",)
     OUTPUT_NODE = True
@@ -83,7 +83,6 @@ class DiscordPostViaWebhook:
         }
 
     async def send_webhook(self, url, message, files=None):
-        """Send the webhook with the given message and up to 4 files."""
         webhook = AsyncDiscordWebhook(url=url, content=message[:2000], timeout=30.0)
         if files:
             for file in files:
@@ -92,45 +91,25 @@ class DiscordPostViaWebhook:
 
     def process_image(self, image):
         """Process the image (or batch of images) and return them in a format suitable for Discord."""
-        if image is None:
-            image = create_default_image()
-        
         images_to_send = []
 
-        # Check if it's a batched image (4D array: [batch_size, height, width, channels])
-        if isinstance(image, np.ndarray):
-            if image.ndim == 4:
-                # Batch of images, process each image separately
-                for i in range(image.shape[0]):
-                    img = image[i]  # Don't squeeze unless we know the axis has size 1
-                    img = Image.fromarray(np.clip(img * 255, 0, 255).astype(np.uint8))
-                    images_to_send.append(img)
-            elif image.ndim == 3:
-                # Single image (3D array: [height, width, channels])
-                image = Image.fromarray(np.clip(image * 255, 0, 255).astype(np.uint8))
-                images_to_send.append(image)
+        if image is None:
+            images_to_send.append(create_default_image())
+        else:
+            # Handle both single and batched images
+            image_array = image.cpu().numpy() if hasattr(image, "cpu") else image
+            image_array = np.clip(image_array * 255, 0, 255).astype(np.uint8)
+
+            if image_array.ndim == 4:  # Batch of images
+                images_to_send = [Image.fromarray(image_array[i]) for i in range(image_array.shape[0])]
+            elif image_array.ndim == 3:  # Single image
+                images_to_send.append(Image.fromarray(image_array))
             else:
-                raise ValueError("Input image array must be 3D or 4D (batch of images).")
+                raise ValueError("Input must be a 3D (single image) or 4D (batch) array.")
 
-        elif hasattr(image, "cpu"):
-            array = image.cpu().numpy()
-
-            # Handle batched images
-            if array.ndim == 4:  # Batch of images
-                for i in range(array.shape[0]):
-                    img_array = array[i]  # Only access the i-th image, no squeeze needed
-                    img = Image.fromarray(np.clip(img_array * 255, 0, 255).astype(np.uint8))
-                    images_to_send.append(img)
-            elif array.ndim == 3:
-                # Single image
-                array = np.clip(array * 255, 0, 255).astype(np.uint8)
-                images_to_send.append(Image.fromarray(array))
-            else:
-                raise ValueError("Input tensor must be 3D or 4D (batch of images).")
-
-        # Save each image to a temporary file and collect file data
-        files = []
+        # Save images and return the file data
         temp_dir = tempfile.mkdtemp()
+        files = []
 
         for idx, img in enumerate(images_to_send):
             file_path = os.path.join(temp_dir, f"image_{idx}.png")
@@ -144,33 +123,28 @@ class DiscordPostViaWebhook:
             with open(file_path, "rb") as f:
                 files.append({"data": f.read(), "name": f"image_{idx}.png"})
 
-        # Clean up the temporary directory
         shutil.rmtree(temp_dir)
-
         return files
 
     def execute(self, image, send_Message=True, send_Image=True, message="", prepend_message=""):
         with open("discord_webhook_url.txt", "r") as f:
             webhook_url = f.read().strip()
-        
+
         if not webhook_url:
             raise ValueError("Webhook URL is empty.")
-        
-        if send_Message:
-            message = f"{prepend_message}\n{message}"
-        
+
+        full_message = f"{prepend_message}\n{message}" if send_Message else ""
         files = self.process_image(image) if send_Image else None
-        
+
         if files:
             # Split files into batches of 4 (Discord limit)
             batches = [files[i:i + 4] for i in range(0, len(files), 4)]
-            
+
             # Send multiple webhooks if necessary
             for batch in batches:
-                asyncio.run(self.send_webhook(webhook_url, message, batch))
+                asyncio.run(self.send_webhook(webhook_url, full_message, batch))
         else:
-            # No images to send, just send the message
-            asyncio.run(self.send_webhook(webhook_url, message))
+            asyncio.run(self.send_webhook(webhook_url, full_message))
 
         return (image,)
 
