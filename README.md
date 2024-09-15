@@ -1,47 +1,50 @@
 # ComfyUI-DiscordWebhook
-A very simple Discord webhook integration node for ComfyUI that lets you post images and text with optional metadata.
+A very simple Discord webhook integration node for ComfyUI that lets you post images and text.
 
-![image](https://github.com/user-attachments/assets/c2459fc5-ff7e-454a-b691-4baf7999d1ea)
-![image](https://github.com/user-attachments/assets/29b24147-4f42-486e-a052-ee022f6b13d2)
+# Usage
+On first use, you will need to use the "Set Discord Webhook" node to set your webhook URL. Create a blank workflow and add the two nodes from the Discord category for Set and Use Discord Webhook.
+
+Connect them together and you should see a test image sent to your Discord channel if you configured your webhook correctly.
+![InitialSetup](https://github.com/user-attachments/assets/17f6d333-612f-44fa-9814-b5144104eefb)
+![SetupResult](https://github.com/user-attachments/assets/fc4bfde1-81c1-4302-95ac-5d7540b26d98)
+
+Delete the Set node after using to ensure that the URL is not saved within any workflow or image metadata.
+
 
 # Installation: 
 > [!NOTE]  
 > Recommended to install ComfyUI-Manager and then search for and install this extension from within the manager: https://github.com/ltdrdata/ComfyUI-Manager?tab=readme-ov-file#installation
 # 
 
-
 Clone or download this repo into your ComfyUI/custom_nodes folder.
+
 
 ![image](https://github.com/user-attachments/assets/71450181-a788-4fc7-ad5f-236c994100c1)
 ![image](https://github.com/user-attachments/assets/eb5a0bc5-1c7f-4aec-9bb6-e7a11de946b8)
 
-# Installation: 
+
+# Modules: 
 > [!IMPORTANT]  
-> Modify your .bat or .sh to include an environment variable containing your your Discord Webhook: https://support.discord.com/hc/en-us/articles/228383668-Intro-to-Webhooks
->
-> Install discord_webhook module with pip.
+> Install discord_webhook[async] module with pip.
 #
 
 # For Windows:
-
-set DISCORD_HOOK="your_webhook_here"
+.\python_embeded\python.exe -s -m pip install --upgrade discord_webhook[async]
 
 Ex. custom_launcher.bat
 ```
-set DISCORD_HOOK="https://discord.com/api/webhooks/012345678910987654321/abcdefghijklmnopqrstuvwxyz"
-.\python_embeded\python.exe -s -m pip install --upgrade discord_webhook
+.\python_embeded\python.exe -s -m pip install --upgrade discord_webhook[async]
 .\python_embeded\python.exe -s ComfyUI\main.py --windows-standalone-build
 pause
 ```
 
 # For Linux:
 
-export 'DISCORD_HOOK=your_webhook_here'
+./bin/python -s ./bin/pip install --upgrade discord_webhook[async]
 
 Ex. custom_launcher.sh
 ```
-export 'DISCORD_HOOK=https://discord.com/api/webhooks/012345678910987654321/abcdefghijklmnopqrstuvwxyz'
-./bin/python -s ./bin/pip install --upgrade discord_webhook
+./bin/python -s ./bin/pip install --upgrade discord_webhook[async]
 ./bin/python -s ./main.py
 pause
 ```
