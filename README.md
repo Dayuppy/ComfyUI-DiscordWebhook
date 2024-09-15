@@ -10,6 +10,8 @@ Connect them together and you should see a test image sent to your Discord chann
 
 Delete the Set node after using to ensure that the URL is not saved within any workflow or image metadata.
 
+# How to Create a Webhook URL
+https://support.discord.com/hc/en-us/articles/228383668-Intro-to-Webhooks
 
 # Installation: 
 > [!NOTE]  
