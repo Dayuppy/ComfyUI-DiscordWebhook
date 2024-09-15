@@ -1,3 +1,6 @@
+> [!IMPORTANT]
+> Delete the Set node after using to ensure that the URL is not saved within any workflow or image metadata.
+
 # ComfyUI-DiscordWebhook
 A very simple Discord webhook integration node for ComfyUI that lets you post images and text.
 
