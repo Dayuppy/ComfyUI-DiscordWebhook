@@ -1,3 +1,4 @@
+"""
 Copyright (C) 2024  Dayuppy
 
     This library is free software; you can redistribute it and/or
@@ -15,7 +16,6 @@ Copyright (C) 2024  Dayuppy
     Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301
     USA
 
-"""
 @author: Dayuppy
 @title: Discord Webhook
 @nickname: DiscordWebhook
@@ -83,6 +83,7 @@ class DiscordPostViaWebhook:
         }
 
     async def send_webhook(self, url, message, files=None):
+        """Send the webhook with the given message and up to 4 files."""
         webhook = AsyncDiscordWebhook(url=url, content=message[:2000], timeout=30.0)
         if files:
             for file in files:
@@ -90,41 +91,64 @@ class DiscordPostViaWebhook:
         await webhook.execute()
 
     def process_image(self, image):
-        """Process the image and return it in a format suitable for Discord."""       
+        """Process the image (or batch of images) and return them in a format suitable for Discord."""
         if image is None:
             image = create_default_image()
-            
+        
+        images_to_send = []
+
+        # Check if it's a batched image (4D array: [batch_size, height, width, channels])
         if isinstance(image, np.ndarray):
-            image = Image.fromarray(np.clip(image.squeeze() * 255, 0, 255).astype(np.uint8))
+            if image.ndim == 4:
+                # Batch of images, process each image separately
+                for i in range(image.shape[0]):
+                    img = image[i]  # Don't squeeze unless we know the axis has size 1
+                    img = Image.fromarray(np.clip(img * 255, 0, 255).astype(np.uint8))
+                    images_to_send.append(img)
+            elif image.ndim == 3:
+                # Single image (3D array: [height, width, channels])
+                image = Image.fromarray(np.clip(image * 255, 0, 255).astype(np.uint8))
+                images_to_send.append(image)
+            else:
+                raise ValueError("Input image array must be 3D or 4D (batch of images).")
+
         elif hasattr(image, "cpu"):
             array = image.cpu().numpy()
 
-            # Convert array to PIL image
-            if 'array' in locals():
-                if len(array.shape) == 4 and array.shape[-1] == 3:
-                    array = np.squeeze(array, axis=0)
+            # Handle batched images
+            if array.ndim == 4:  # Batch of images
+                for i in range(array.shape[0]):
+                    img_array = array[i]  # Only access the i-th image, no squeeze needed
+                    img = Image.fromarray(np.clip(img_array * 255, 0, 255).astype(np.uint8))
+                    images_to_send.append(img)
+            elif array.ndim == 3:
+                # Single image
+                array = np.clip(array * 255, 0, 255).astype(np.uint8)
+                images_to_send.append(Image.fromarray(array))
+            else:
+                raise ValueError("Input tensor must be 3D or 4D (batch of images).")
 
-            array = np.clip(array * 255, 0, 255).astype(np.uint8)
-            image = Image.fromarray(array)
-    
-        # Save the image to a temporary file
+        # Save each image to a temporary file and collect file data
+        files = []
         temp_dir = tempfile.mkdtemp()
-        file_path = os.path.join(temp_dir, "image.png")
-        image.save(file_path, format="PNG", compress_level=1)
 
-         # If the file size exceeds 20MB, resize and save again
-        if os.path.getsize(file_path) > 20 * 1024 * 1024:
-            image = image.resize((image.width // 2, image.height // 2))
-            image.save(file_path, format="PNG", compress_level=9)
+        for idx, img in enumerate(images_to_send):
+            file_path = os.path.join(temp_dir, f"image_{idx}.png")
+            img.save(file_path, format="PNG", compress_level=1)
 
-        with open(file_path, "rb") as f:
-            files = [{"data": f.read(), "name": "image.png"}]
+            # If the file size exceeds 20MB, resize and save again
+            if os.path.getsize(file_path) > 20 * 1024 * 1024:
+                img = img.resize((img.width // 2, img.height // 2))
+                img.save(file_path, format="PNG", compress_level=9)
+
+            with open(file_path, "rb") as f:
+                files.append({"data": f.read(), "name": f"image_{idx}.png"})
 
         # Clean up the temporary directory
         shutil.rmtree(temp_dir)
-        
+
         return files
-    
+
     def execute(self, image, send_Message=True, send_Image=True, message="", prepend_message=""):
         with open("discord_webhook_url.txt", "r") as f:
             webhook_url = f.read().strip()
@@ -136,7 +160,17 @@ class DiscordPostViaWebhook:
             message = f"{prepend_message}\n{message}"
         
         files = self.process_image(image) if send_Image else None
-        asyncio.run(self.send_webhook(webhook_url, message, files))
+        
+        if files:
+            # Split files into batches of 4 (Discord limit)
+            batches = [files[i:i + 4] for i in range(0, len(files), 4)]
+            
+            # Send multiple webhooks if necessary
+            for batch in batches:
+                asyncio.run(self.send_webhook(webhook_url, message, batch))
+        else:
+            # No images to send, just send the message
+            asyncio.run(self.send_webhook(webhook_url, message))
 
         return (image,)
 

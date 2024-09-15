@@ -1,3 +1,4 @@
+"""
 Copyright (C) 2024  Dayuppy
 
     This library is free software; you can redistribute it and/or
@@ -14,6 +15,12 @@ Copyright (C) 2024  Dayuppy
     License along with this library; if not, write to the Free Software
     Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301
     USA
+
+@author: Dayuppy
+@title: Discord Webhook
+@nickname: DiscordWebhook
+@description: A very simple Discord webhook integration node for ComfyUI that lets you post images and text.
+"""
 
 from .nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
 
