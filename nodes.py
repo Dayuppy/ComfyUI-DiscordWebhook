@@ -2,7 +2,7 @@
 @author: Dayuppy
 @title: Discord Webhook
 @nickname: DiscordWebhook
-@description: A very simple Discord webhook integration node for ComfyUI that lets you post images and text with optional metadata.
+@description: A very simple Discord webhook integration node for ComfyUI that lets you post images and text.
 """
 
 import os
