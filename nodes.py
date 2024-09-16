@@ -29,12 +29,12 @@ import numpy as np
 import asyncio
 import soundfile as sf
 import ffmpeg
-import torchaudio
 import torch
 import torchvision.io as tvio
 import hashlib
 import folder_paths # type: ignore
-from PIL import Image, ImageDraw
+import torchvision.transforms as transforms
+from PIL import Image, ImageDraw, ImageOps
 from discord_webhook import AsyncDiscordWebhook
 
 def create_default_image():
@@ -93,35 +93,102 @@ def process_audio(audio):
     shutil.rmtree(temp_dir)  # Clean up temporary directory
     return {"data": data, "name": "audio.flac"}
 
+def process_video_to_WEBM(video_frames, fps=15, max_width=1280, max_height=720):
+    """Process video tensor frames and convert them to a WebM video file suitable for Discord."""
 
-def process_video(video_path):
-    """Process video input (assuming it's a file path) and convert it to FLV format."""
+    # Debugging: Print the shape of the video tensor
+    print(f"DEBUG: Video frames shape: {video_frames.shape}")
+
+    # Transpose to (num_frames, height, width, channels) to match write_video's expected input
+    video_frames = video_frames.permute(0, 2, 3, 1)  # Move channels to the last dimension
+
+    # Resize video frames to ensure they fit within the desired width/height limits
+    resized_video_frames = []
+    for frame in video_frames:
+        # Debugging: Check the shape of the individual frame
+        print(f"DEBUG: Frame shape before conversion to PIL: {frame.shape}")
+
+        # Convert the tensor frame to a NumPy array
+        frame_np = frame.numpy()
+
+        # Ensure the frame has 3 channels (RGB)
+        if frame_np.shape[-1] > 4:
+            raise ValueError(f"Expected the video frame to have 3 or 4 channels, but got {frame_np.shape[-1]} channels.")
+
+        # Convert the NumPy array to a PIL image
+        pil_image = Image.fromarray((frame_np * 255).astype(np.uint8))  # Scale the values to 0-255
+
+        aspect_ratio = pil_image.width / pil_image.height
+
+        # Resize the frame if it exceeds the max dimensions
+        if pil_image.width > max_width or pil_image.height > max_height:
+            if aspect_ratio > 1:
+                new_width = max_width
+                new_height = int(max_width / aspect_ratio)
+            else:
+                new_height = max_height
+                new_width = int(max_height * aspect_ratio)
+            pil_image = pil_image.resize((new_width, new_height))
+
+        # Convert back to tensor and ensure the shape is (height, width, channels)
+        resized_frame = transforms.ToTensor()(pil_image).permute(1, 2, 0)  # Ensure it's (height, width, channels)
+        resized_frame = resized_frame * 255  # Scale back to 0-255 for video encoding
+        resized_video_frames.append(resized_frame)
+
+    # Stack the frames back into a single tensor with the correct shape
+    resized_video_tensor = torch.stack(resized_video_frames).byte()  # Ensure the tensor is of byte type (0-255)
+
+    # Create a temporary directory to store the video file
     temp_dir = tempfile.mkdtemp()
-    output_file = os.path.join(temp_dir, "video.flv")
+    temp_video_file = os.path.join(temp_dir, "temp_video.mp4")  # Save as mp4 initially
 
-    # Use ffmpeg-python to convert to FLV format
-    ffmpeg.input(video_path).output(output_file, format='flv').run(overwrite_output=True)
+    # Save the tensor video frames to a temporary mp4 file (expected shape: num_frames, height, width, channels)
+    tvio.write_video(temp_video_file, resized_video_tensor, fps=fps)
 
+    # Now use ffmpeg to convert the saved video to WebM format (VP8 or VP9 codec)
+    output_file = os.path.join(temp_dir, "video.webm")
+
+    # Use ffmpeg to convert the mp4 video to WebM with VP8 codec
+    ffmpeg.input(temp_video_file).output(output_file, vcodec='libvpx', crf=10, **{'b:v': '1M'}).run(overwrite_output=True)
+
+    # Read the final WebM video file as binary data
     with open(output_file, 'rb') as f:
-        data = f.read()
+        video_data = f.read()
 
+    # Clean up temporary files and directory
     shutil.rmtree(temp_dir)
-    return {"data": data, "name": "video.flv"}
+
+    return {"data": video_data, "name": "video.webm"}
+
 
 class DiscordLoadVideo:
     @classmethod
     def INPUT_TYPES(cls):
+        # Allow users to either specify a directory or use the input directory
         input_dir = folder_paths.get_input_directory()
-        files = [f for f in os.listdir(input_dir) if os.path.isfile(os.path.join(input_dir, f)) and f.endswith(('.mp4', '.avi', '.mov', '.mkv'))]
-        return {"required": {"video": (sorted(files), {"video_upload": True})}}
 
-    CATEGORY = "Discord\Video"
-    
+        # List video files with specific extensions
+        files = folder_paths.filter_files_content_types(os.listdir(input_dir), ["video"])
+
+        # Debugging: Print the input directory and list the files
+        print("DEBUG: Input Directory:", input_dir)
+        print("DEBUG: Files in Input Directory:", files)
+
+        return {
+            "required": {
+                "file_path": ("STRING", {"default": input_dir}),  # The directory path
+                "video": (sorted(files), {"video_upload": True})  # The video file name
+            }
+        }
+
+    CATEGORY = "Video"
     RETURN_TYPES = ("VIDEO", "AUDIO")
     FUNCTION = "load_video"
+    EXPERIMENTAL = True
 
-    def load_video(self, video):
-        video_path = folder_paths.get_annotated_filepath(video)
+    def load_video(self, video, file_path):
+        # Combine file path and video filename to get the full video path
+        video_path = os.path.join(file_path, video)
 
         # Load video frames and audio using torchvision's read_video
         video_frames, audio_frames, info = tvio.read_video(video_path, pts_unit="sec")
@@ -132,9 +199,12 @@ class DiscordLoadVideo:
         # Transpose to match the typical format (batch_size, channels, height, width, num_frames)
         video_frames = video_frames.permute(0, 3, 1, 2)
 
-        # Normalize audio frames (if audio is present)
-        if audio_frames is not None and len(audio_frames) > 0:
-            audio_frames = audio_frames.float() / torch.abs(audio_frames).max()  # Normalize audio
+        # Check if audio is present before normalizing
+        if audio_frames is not None and audio_frames.numel() > 0:
+            audio_frames = audio_frames.float() / torch.abs(audio_frames).max(dim=0, keepdim=True).values  # Normalize audio
+        else:
+            print("DEBUG: No audio frames found, skipping audio normalization.")
+            audio_frames = None
 
         return (video_frames, audio_frames)
 
@@ -248,7 +318,7 @@ class DiscordPostViaWebhook:
         if audio is not None:
             files.append(process_audio(audio))  # Handle audio as an array/tensor
         if video is not None:
-            files.append(process_video(video))  # Handle video as a file path or array
+            files.append(process_video_to_WEBM(video))  # Handle video
 
         # Ensure files are within size limit
         valid_files = [f for f in files if len(f["data"]) <= 25 * 1024 * 1024]
@@ -259,7 +329,7 @@ class DiscordPostViaWebhook:
         for batch in batches:
             asyncio.run(self.send_webhook(webhook_url, full_message, batch))
 
-        return (image, None)
+        return (image,)
 
 NODE_CLASS_MAPPINGS = {
     "DiscordSetWebhook": DiscordSetWebhook,
@@ -270,5 +340,5 @@ NODE_CLASS_MAPPINGS = {
 NODE_DISPLAY_NAME_MAPPINGS = {
     "DiscordSetWebhook": "Set Discord Webhook",
     "DiscordPostViaWebhook": "Use Discord Webhook",
-    "DiscordLoadVideo": "Load Video for Discord",
+    "DiscordLoadVideo": "Load Video",
 }

@@ -1,3 +1,4 @@
 discord_webhook[async]
 ffmpeg-python
 torchaudio
+av
