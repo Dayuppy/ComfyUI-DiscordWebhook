@@ -1,5 +1,5 @@
 [project]
-name = "Discord Webhook"
+name = "comfyui-discordwebhook"
 description = "A very simple Discord webhook integration node for ComfyUI that lets you post images and text."
 version = "1.0.0"
 license = {file = "LICENSE"}
@@ -11,5 +11,5 @@ Repository = "https://github.com/Dayuppy/ComfyUI-DiscordWebhook"
 
 [tool.comfy]
 PublisherId = "dayuppy"
-DisplayName = "ComfyUI-DiscordWebhook"
+DisplayName = "Discord Webhook"
 Icon = ""
