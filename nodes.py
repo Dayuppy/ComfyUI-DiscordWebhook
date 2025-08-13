@@ -75,7 +75,7 @@ class DiscordPostViaWebhook:
                 "image": ("IMAGE",)
                 },
             "optional": {
-                "send_Message": ("BOOLEAN", {"default": True}),
+                "send_Message": ("BOOLEAN", {"default": False}),
                 "send_Image": ("BOOLEAN", {"default": True}),
                 "message": ("STRING", {"default": "", "multiline": True}),
                 "prepend_message": ("STRING", {"default": "", "multiline": True}),
@@ -92,11 +92,11 @@ class DiscordPostViaWebhook:
 
     def process_image(self, image):
         """Process the image (or batch of images) and return them in a format suitable for Discord."""
+        images_to_send = []
+        
         if image is None:
             image = create_default_image()
-        
-        images_to_send = []
-
+           
         # Check if it's a batched image (4D array: [batch_size, height, width, channels])
         if isinstance(image, np.ndarray):
             if image.ndim == 4:
@@ -107,7 +107,7 @@ class DiscordPostViaWebhook:
                     images_to_send.append(img)
             elif image.ndim == 3:
                 # Single image (3D array: [height, width, channels])
-                image = Image.fromarray(np.clip(image * 255, 0, 255).astype(np.uint8))
+                image = Image.fromarray(np.clip(image * 255, 0, 255).astype(np.uint8)) 
                 images_to_send.append(image)
             else:
                 raise ValueError("Input image array must be 3D or 4D (batch of images).")
@@ -127,7 +127,10 @@ class DiscordPostViaWebhook:
                 images_to_send.append(Image.fromarray(array))
             else:
                 raise ValueError("Input tensor must be 3D or 4D (batch of images).")
-
+         
+        else:
+            images_to_send.append(image)
+            
         # Save each image to a temporary file and collect file data
         files = []
         temp_dir = tempfile.mkdtemp()
@@ -149,13 +152,13 @@ class DiscordPostViaWebhook:
 
         return files
 
-    def execute(self, image, send_Message=True, send_Image=True, message="", prepend_message=""):
+    async def execute(self, image, send_Message=True, send_Image=True, message="", prepend_message=""):
         with open("discord_webhook_url.txt", "r") as f:
             webhook_url = f.read().strip()
         
         if not webhook_url:
             raise ValueError("Webhook URL is empty.")
-        
+            
         if send_Message:
             message = f"{prepend_message}\n{message}"
         
@@ -167,10 +170,10 @@ class DiscordPostViaWebhook:
             
             # Send multiple webhooks if necessary
             for batch in batches:
-                asyncio.run(self.send_webhook(webhook_url, message, batch))
+                await self.send_webhook(webhook_url, message, batch)
         else:
             # No images to send, just send the message
-            asyncio.run(self.send_webhook(webhook_url, message))
+            await self.send_webhook(webhook_url, message)
 
         return (image,)
 
